@@ -213,8 +213,8 @@ class Network(object):
     def get_or_create_vlan(self, vlan_id):
         # FIXME: we may need to specify the datacenter
         # since users may have same vlan id in multiple dc
-    vlans = list(nb.ipam.vlans.filter(vid=vlan_id))
-    vlan = vlans[0] if vlans else None
+        vlans = list(nb.ipam.vlans.filter(vid=vlan_id))
+        vlan = vlans[0] if vlans else None
         if vlan is None:
             vlan = nb.ipam.vlans.create(
                 name="VLAN {}".format(vlan_id),
