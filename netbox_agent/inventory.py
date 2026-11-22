@@ -362,38 +362,95 @@ class Inventory:
         uniq = [x for x in disks if x["SN"] not in seen and not seen.add(x["SN"])]
         return uniq
 
+        def find_or_create_module_type(self, manufacturer, model, part_number=None, description=""):
+        # NetBox ModuleType requires a manufacturer; default to "Generic" if missing
+        if not manufacturer:
+            manufacturer = self.find_or_create_manufacturer("Generic")
+
+        mod_type = nb.dcim.module_types.get(
+            manufacturer_id=manufacturer.id,
+            model=model,
+        )
+        if not mod_type:
+            parms = {
+                "manufacturer": manufacturer.id,
+                "model": model,
+                "part_number": part_number or "",
+                "description": description,
+            }
+            mod_type = nb.dcim.module_types.create(**parms)
+        return mod_type
+
     def create_netbox_disk(self, disk):
         manufacturer = None
-        if "Vendor" in disk:
+        if disk.get("Vendor"):
             manufacturer = self.find_or_create_manufacturer(disk["Vendor"])
 
-        logicalname = disk.get("logicalname")
-        desc = disk.get("description")
         name = "{} ({})".format(disk["Model"], disk["Size"])
         description = disk["Type"]
         sn = disk.get("SN", "unknown")
 
+        mod_type = self.find_or_create_module_type(
+            manufacturer=manufacturer,
+            model=name,
+            part_number=disk["Model"],
+            description=description,
+        )
+
+        # Skip creation if a module with this serial already exists on the device
+        if sn and sn != "unknown":
+            existing_modules = nb.dcim.modules.filter(device_id=self.device_id)
+            for mod in existing_modules:
+                if mod.serial == sn:
+                    if mod.module_type.id != mod_type.id:
+                        mod.module_type = mod_type.id
+                        mod.save()
+                    logging.info(
+                        "Disk Module {model} {serial} already exists".format(
+                            model=disk["Model"],
+                            serial=sn,
+                        )
+                    )
+                    return
+
+        # Find the first unoccupied ModuleBay on the device (sorted alphabetically)
+        bays = sorted(
+            list(nb.dcim.module_bays.filter(device_id=self.device_id)),
+            key=lambda b: b.name,
+        )
+        empty_bay = next((b for b in bays if not b.installed_module), None)
+        if not empty_bay:
+            logging.warning(
+                "No empty ModuleBay available on device {dev} for disk {model} {serial}".format(
+                    dev=self.device_id,
+                    model=disk["Model"],
+                    serial=sn,
+                )
+            )
+            return
+
         parms = {
             "device": self.device_id,
-            "discovered": True,
-            "tags": [{"name": INVENTORY_TAG["disk"]["name"]}],
-            "name": name,
-            "serial": sn,
-            "part_id": disk["Model"],
+            "module_bay": empty_bay.id,
+            "module_type": mod_type.id,
+            "serial": sn if sn != "unknown" else "",
+            "status": "active",
             "description": description,
-            "manufacturer": getattr(manufacturer, "id", None),
+            "tags": [{"name": INVENTORY_TAG["disk"]["name"]}],
         }
         if config.process_virtual_drives:
             parms["custom_fields"] = disk.get("custom_fields", {})
 
-        _ = nb.dcim.inventory_items.create(**parms)
+        _ = nb.dcim.modules.create(**parms)
 
         logging.info(
-            "Creating Disk {model} {serial}".format(
+            "Creating Disk Module {model} {serial} in bay {bay}".format(
                 model=disk["Model"],
                 serial=sn,
+                bay=empty_bay.name,
             )
         )
+
 
     def dump_disks_map(self, disks):
         disk_map = [d["custom_fields"] for d in disks if "custom_fields" in d]
