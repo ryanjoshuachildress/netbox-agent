@@ -7,6 +7,7 @@ from pathlib import Path
 import netifaces
 from netaddr import IPAddress
 from packaging import version
+from pynetbox.core.query import RequestError
 
 from netbox_agent.config import config
 from netbox_agent.config import netbox_instance as nb
@@ -607,6 +608,32 @@ class ServerNetwork(Network):
         ipmi = IPMI().parse()
         return ipmi
 
+    def _delete_stale_cables(self, *interfaces):
+        for intf in interfaces:
+            intf = nb.dcim.interfaces.get(intf.id)
+            if intf.cable is not None:
+                stale_cable = nb.dcim.cables.get(intf.cable.id)
+                logging.info(f"Deleting stale cable {stale_cable.id} connected to {intf.name}")
+                stale_cable.delete()
+
+    def _create_cable_safe(self, nb_server_interface, nb_switch_interface):
+        a_term = {"object_type": "dcim.interface", "object_id": nb_server_interface.id}
+        b_term = {"object_type": "dcim.interface", "object_id": nb_switch_interface.id}
+        try:
+            return nb.dcim.cables.create(
+                a_terminations=[a_term],
+                b_terminations=[b_term],
+            )
+        except RequestError as e:
+            if "Duplicate termination" not in str(e):
+                raise
+            logging.warning("Duplicate termination conflict, deleting stale cable(s) and retrying")
+            self._delete_stale_cables(nb_server_interface, nb_switch_interface)
+            return nb.dcim.cables.create(
+                a_terminations=[a_term],
+                b_terminations=[b_term],
+            )
+
     def connect_interface_to_switch(self, switch_ip, switch_interface, nb_server_interface):
         logging.info(
             f"Interface {nb_server_interface.name} is not connected to switch, trying to connect.."
@@ -639,14 +666,7 @@ class ServerNetwork(Network):
             return nb_server_interface
 
         logging.info(f"Found interface {switch_interface} on switch {switch_ip}")
-        cable = nb.dcim.cables.create(
-            a_terminations=[
-                {"object_type": "dcim.interface", "object_id": nb_server_interface.id},
-            ],
-            b_terminations=[
-                {"object_type": "dcim.interface", "object_id": nb_switch_interface.id},
-            ],
-        )
+        cable = self._create_cable_safe(nb_server_interface, nb_switch_interface)
         nb_server_interface.cable = cable
         logging.info(
             f"Connected interface {nb_server_interface.name} with {switch_interface} of {switch_ip}"
