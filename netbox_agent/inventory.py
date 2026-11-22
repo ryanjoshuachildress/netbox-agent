@@ -25,11 +25,18 @@ INVENTORY_TAG = {
 }
 
 
+def natural_bay_sort_key(bay):
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.casefold())
+        for part in re.split(r"(\d+)", str(bay.name))
+        if part
+    )
+
+
 class Inventory:
     """
-    Better Inventory items coming, see:
-    - https://github.com/netbox-community/netbox/issues/3087
-    - https://github.com/netbox-community/netbox/issues/3333
+    Hardware inventory backed by NetBox modules (module bays + module types)
+    instead of the deprecated inventory items.
 
     This class implements for:
     * memory
@@ -37,6 +44,8 @@ class Inventory:
     * raid cards
     * disks
     * gpus
+    * motherboard
+    * built-in interfaces
 
     methods that:
     * get local item
@@ -101,20 +110,104 @@ class Inventory:
 
         return list(items)
 
-    def create_netbox_inventory_item(self, device_id, tags, vendor, name, serial, description):
-        manufacturer = self.find_or_create_manufacturer(vendor)
+    def _normalize_serial(self, serial):
+        if serial is None:
+            return ""
+        serial = str(serial).strip()
+        return "" if serial in ("N/A", "No SN", "None") else serial
 
-        _ = nb.dcim.inventory_items.create(
-            device=device_id,
-            manufacturer=manufacturer.id,
-            discovered=True,
-            tags=tags,
-            name=f"{name}",
-            serial=f"{serial}",
+    def _get_netbox_modules(self, tag):
+        try:
+            mods = nb.dcim.modules.filter(device_id=self.device_id, tag=tag)
+        except pynetbox.core.query.RequestError:
+            logging.info(f"Tag {tag} is missing, returning empty array.")
+            mods = []
+        return list(mods)
+
+    def _module_type_for(self, vendor, model, part=None, description=""):
+        manufacturer = self.find_or_create_manufacturer(vendor)
+        return self.find_or_create_module_type(
+            manufacturer=manufacturer,
+            model=str(model),
+            part_number=part or "",
             description=description,
         )
 
-        logging.info(f"Creating inventory item {vendor} {name}/{serial} {description} ")
+    def _ensure_module_bay(self, name):
+        bay = nb.dcim.module_bays.get(device_id=self.device_id, name=name)
+        if bay:
+            return bay
+        logging.info(f"Creating ModuleBay {name} on device {self.device_id}")
+        return nb.dcim.module_bays.create(device=self.device_id, name=name)
+
+    def _sync_modules(self, kind, slots):
+        slug = INVENTORY_TAG[kind]["slug"]
+        nb_modules = self._get_netbox_modules(slug)
+        type_cache = {}
+
+        def mod_type_for(slot):
+            key = (str(slot.get("vendor") or ""), str(slot["model"]))
+            if key not in type_cache:
+                type_cache[key] = self._module_type_for(
+                    vendor=slot.get("vendor"),
+                    model=slot["model"],
+                    part=slot.get("part"),
+                    description=slot.get("description", ""),
+                )
+            return type_cache[key]
+
+        for mod in list(nb_modules):
+            bay_name = mod.module_bay.name if mod.module_bay else None
+            slot = slots.get(bay_name) if bay_name else None
+            if slot is None:
+                logging.info(f"Deleting unknown locally {kind} module {mod}")
+                mod.delete()
+                nb_modules.remove(mod)
+                continue
+            local_serial = self._normalize_serial(slot["serial"])
+            same_serial = not (mod.serial and local_serial) or mod.serial == local_serial
+            if not same_serial or mod.module_type.display != slot["model"]:
+                logging.info(f"Replacing {kind} module {mod} in bay {bay_name}")
+                mod.delete()
+                nb_modules.remove(mod)
+
+        for bay_name, slot in slots.items():
+            existing = next((m for m in nb_modules if m.module_bay.name == bay_name), None)
+            mod_type = mod_type_for(slot)
+            if existing is not None:
+                if existing.module_type.id != mod_type.id:
+                    existing.module_type = mod_type.id
+                    existing.save()
+                continue
+            bay = self._ensure_module_bay(bay_name)
+            if getattr(bay, "installed_module", None):
+                logging.warning(f"Bay {bay_name} is occupied, skipping {kind} module")
+                continue
+            serial = self._normalize_serial(slot["serial"])
+            if serial and len(
+                list(nb.dcim.modules.filter(device_id=self.device_id, serial=serial))
+            ):
+                logging.info(f"{kind} module with serial {serial} already exists")
+                continue
+            nb.dcim.modules.create(
+                device=self.device_id,
+                module_bay=bay.id,
+                module_type=mod_type.id,
+                serial=serial,
+                status="active",
+                description=slot.get("description", ""),
+                tags=[{"name": INVENTORY_TAG[kind]["name"]}],
+            )
+            logging.info(
+                f"Creating {kind} module {slot['model']} ({serial or 'no SN'}) in bay {bay_name}"
+            )
+
+    def purge_old_inventory_items(self):
+        for tag in INVENTORY_TAG.values():
+            items = self.get_netbox_inventory(device_id=self.device_id, tag=tag["slug"])
+            for item in items:
+                logging.info(f"Deleting old inventory item {item.name}")
+                item.delete()
 
     def get_hw_motherboards(self):
         motherboards = []
@@ -129,88 +222,62 @@ class Inventory:
 
         return motherboards
 
-    def do_netbox_motherboard(self):
+    def _slots_for_motherboard(self):
         motherboards = self.get_hw_motherboards()
-        nb_motherboards = self.get_netbox_inventory(
-            device_id=self.device_id, tag=INVENTORY_TAG["motherboard"]["slug"]
-        )
+        if not motherboards:
+            return {}
+        m = motherboards[0]
+        model = self.lshw.motherboard or m.get("name") or "Motherboard"
+        return {
+            "Motherboard": {
+                "vendor": m.get("vendor") or "",
+                "model": str(model),
+                "part": "",
+                "serial": m.get("serial") or "",
+                "description": m.get("description") or "Motherboard",
+            }
+        }
 
-        for nb_motherboard in nb_motherboards:
-            if nb_motherboard.serial not in [x["serial"] for x in motherboards]:
-                logging.info(
-                    f"Deleting unknown motherboard {self.lshw.motherboard}/{nb_motherboard.serial}"
-                )
-                nb_motherboard.delete()
+    def do_netbox_motherboard(self):
+        self._sync_modules("motherboard", self._slots_for_motherboard())
 
-        # create interfaces that are not in netbox
-        for motherboard in motherboards:
-            if motherboard.get("serial") not in [x.serial for x in nb_motherboards]:
-                self.create_netbox_inventory_item(
-                    device_id=self.device_id,
-                    tags=[{"name": INVENTORY_TAG["motherboard"]["name"]}],
-                    vendor="{}".format(motherboard.get("vendor", "N/A")),
-                    serial="{}".format(motherboard.get("serial", "No SN")),
-                    name="{}".format(motherboard.get("name")),
-                    description="{}".format(motherboard.get("description")),
-                )
-
-    def create_netbox_interface(self, iface):
-        manufacturer = self.find_or_create_manufacturer(iface["vendor"])
-        _ = nb.dcim.inventory_items.create(
-            device=self.device_id,
-            manufacturer=manufacturer.id,
-            discovered=True,
-            tags=[{"name": INVENTORY_TAG["interface"]["name"]}],
-            name="{}".format(iface["product"]),
-            serial="{}".format(iface["serial"]),
-            description="{} {}".format(iface["description"], iface["name"]),
-        )
+    def _slots_for_interfaces(self):
+        slots = {}
+        for i, iface in enumerate(
+            sorted(self.lshw.interfaces, key=lambda x: str(x.get("name", ""))), start=1
+        ):
+            bay_name = f"NIC {i}"
+            description = "{} {}".format(
+                iface.get("description", ""), iface.get("name", "")
+            ).strip()
+            slots[bay_name] = {
+                "vendor": iface.get("vendor") or "Unknown",
+                "model": iface.get("product") or "Unknown NIC",
+                "part": "",
+                "serial": self._normalize_serial(iface.get("serial", "")),
+                "description": description,
+            }
+        return slots
 
     def do_netbox_interfaces(self):
-        nb_interfaces = self.get_netbox_inventory(
-            device_id=self.device_id, tag=INVENTORY_TAG["interface"]["slug"]
-        )
-        interfaces = self.lshw.interfaces
+        self._sync_modules("interface", self._slots_for_interfaces())
 
-        # delete interfaces that are in netbox but not locally
-        # use the serial_number has the comparison element
-        for nb_interface in nb_interfaces:
-            if nb_interface.serial not in [x["serial"] for x in interfaces]:
-                logging.info(f"Deleting unknown interface {nb_interface.serial}")
-                nb_interface.delete()
-
-        # create interfaces that are not in netbox
-        for iface in interfaces:
-            if iface.get("serial") not in [x.serial for x in nb_interfaces]:
-                self.create_netbox_interface(iface)
-
-    def create_netbox_cpus(self):
-        for cpu in self.lshw.get_hw_linux("cpu"):
-            manufacturer = self.find_or_create_manufacturer(cpu["vendor"])
-            _ = nb.dcim.inventory_items.create(
-                device=self.device_id,
-                manufacturer=manufacturer.id,
-                discovered=True,
-                tags=[{"name": INVENTORY_TAG["cpu"]["name"]}],
-                name=cpu["product"],
-                description="CPU {}".format(cpu["location"]),
-                # asset_tag=cpu['location']
-            )
-
-            logging.info("Creating CPU model {}".format(cpu["product"]))
+    def _slots_for_cpus(self):
+        slots = {}
+        cpus = self.lshw.get_hw_linux("cpu")
+        for i, cpu in enumerate(cpus, start=1):
+            bay_name = str(cpu.get("location") or f"CPU {i}")
+            slots[bay_name] = {
+                "vendor": cpu.get("vendor") or "Unknown vendor",
+                "model": cpu.get("product") or f"CPU {i}",
+                "part": "",
+                "serial": cpu.get("serial", ""),
+                "description": cpu.get("description") or "CPU",
+            }
+        return slots
 
     def do_netbox_cpus(self):
-        cpus = self.lshw.get_hw_linux("cpu")
-        nb_cpus = self.get_netbox_inventory(
-            device_id=self.device_id,
-            tag=INVENTORY_TAG["cpu"]["slug"],
-        )
-
-        if not len(nb_cpus) or len(nb_cpus) and len(cpus) != len(nb_cpus):
-            for x in nb_cpus:
-                x.delete()
-
-            self.create_netbox_cpus()
+        self._sync_modules("cpu", self._slots_for_cpus())
 
     def get_raid_cards(self, filter_cards=False):
         raid_class = None
@@ -235,50 +302,26 @@ class Inventory:
         else:
             return self.raid.get_controllers()
 
-    def create_netbox_raid_card(self, raid_card):
-        manufacturer = self.find_or_create_manufacturer(raid_card.get_manufacturer())
-
-        name = raid_card.get_product_name()
-        serial = raid_card.get_serial_number()
-        nb_raid_card = nb.dcim.inventory_items.create(
-            device=self.device_id,
-            discovered=True,
-            manufacturer=manufacturer.id if manufacturer else None,
-            tags=[{"name": INVENTORY_TAG["raid_card"]["name"]}],
-            name=f"{name}",
-            serial=f"{serial}",
-            description="RAID Card",
-        )
-        logging.info(f"Creating RAID Card {name} (SN: {serial})")
-        return nb_raid_card
+    def _slots_for_raid_cards(self):
+        slots = {}
+        seen = set()
+        for i, raid_card in enumerate(self.get_raid_cards(filter_cards=True), start=1):
+            model = raid_card.get_product_name() or "RAID Card"
+            serial = self._normalize_serial(raid_card.get_serial_number())
+            if serial in seen:
+                serial = ""
+            seen.add(serial)
+            slots[f"RAID {i}"] = {
+                "vendor": raid_card.get_manufacturer() or "",
+                "model": str(model),
+                "part": "",
+                "serial": serial,
+                "description": "RAID Card",
+            }
+        return slots
 
     def do_netbox_raid_cards(self):
-        """
-        Update raid cards in netbobx
-        Since we only push:
-        * Name
-        * Manufacturer
-        * Serial
-
-        We only need to handle destroy and new cards
-        """
-
-        nb_raid_cards = self.get_netbox_inventory(
-            device_id=self.device_id, tag=[INVENTORY_TAG["raid_card"]["slug"]]
-        )
-        raid_cards = self.get_raid_cards(filter_cards=True)
-
-        # delete cards that are in netbox but not locally
-        # use the serial_number has the comparison element
-        for nb_raid_card in nb_raid_cards:
-            if nb_raid_card.serial not in [x.get_serial_number() for x in raid_cards]:
-                logging.info(f"Deleting unknown locally RAID Card {nb_raid_card.serial}")
-                nb_raid_card.delete()
-
-        # create card that are not in netbox
-        for raid_card in raid_cards:
-            if raid_card.get_serial_number() not in [x.serial for x in nb_raid_cards]:
-                self.create_netbox_raid_card(raid_card)
+        self._sync_modules("raid_card", self._slots_for_raid_cards())
 
     def is_virtual_disk(self, disk, raid_devices):
         disk_type = disk.get("type")
@@ -328,7 +371,7 @@ class Inventory:
             size = round(int(disk.get("size") or 0) / 1073741824, 1)
             d = {
                 "name": "",
-                "Size": f"{size} GB",
+                "Size": "{} GB".format(size),
                 "logicalname": disk.get("logicalname"),
                 "description": disk.get("description"),
                 "SN": disk.get("serial"),
@@ -397,10 +440,10 @@ class Inventory:
                     )
                     return
 
-        # Find the first unoccupied ModuleBay on the device (sorted alphabetically)
+        # Find the first unoccupied ModuleBay on the device (natural sorted)
         bays = sorted(
             list(nb.dcim.module_bays.filter(device_id=self.device_id)),
-            key=lambda b: b.name,
+            key=natural_bay_sort_key,
         )
         empty_bay = next((b for b in bays if not b.installed_module), None)
         if not empty_bay:
@@ -490,69 +533,26 @@ class Inventory:
             if disk.get("SN") not in [d.serial for d in nb_disks]:
                 self.create_netbox_disk(disk)
 
-    def create_netbox_memory(self, memory):
-        manufacturer = self.find_or_create_manufacturer(memory["vendor"])
-        name = "Slot {} ({}GB)".format(memory["slot"], memory["size"])
-        nb_memory = nb.dcim.inventory_items.create(
-            device=self.device_id,
-            discovered=True,
-            manufacturer=manufacturer.id,
-            tags=[{"name": INVENTORY_TAG["memory"]["name"]}],
-            name=name,
-            part_id=memory["product"],
-            serial=memory["serial"],
-            description=memory["description"],
-        )
-
-        logging.info(
-            "Creating Memory {location} {type} {size}GB".format(
-                location=memory["slot"],
-                type=memory["product"],
-                size=memory["size"],
-            )
-        )
-
-        return nb_memory
+    def _slots_for_memories(self):
+        slots = {}
+        for i, mem in enumerate(self.lshw.memories, start=1):
+            bay_name = str(mem.get("slot") or f"DIMM {i}")
+            size = mem.get("size")
+            description = "{size} GB".format(size=size) if size else "Memory"
+            slots[bay_name] = {
+                "vendor": mem.get("vendor") or "N/A",
+                "model": str(mem.get("product") or f"DIMM {i}"),
+                "part": mem.get("product") or "",
+                "serial": self._normalize_serial(mem.get("serial", "N/A")),
+                "description": description,
+            }
+        return slots
 
     def do_netbox_memories(self):
-        memories = self.lshw.memories
-        nb_memories = self.get_netbox_inventory(
-            device_id=self.device_id, tag=INVENTORY_TAG["memory"]["slug"]
-        )
+        self._sync_modules("memory", self._slots_for_memories())
 
-        for nb_memory in nb_memories:
-            if nb_memory.serial not in [x["serial"] for x in memories]:
-                logging.info(f"Deleting unknown locally Memory {nb_memory.serial}")
-                nb_memory.delete()
-
-        for memory in memories:
-            if memory.get("serial") not in [x.serial for x in nb_memories]:
-                self.create_netbox_memory(memory)
-
-    def create_netbox_gpus(self, gpus):
-        for gpu in gpus:
-            if "product" in gpu and len(gpu["product"]) > 50:
-                gpu["product"] = gpu["product"][:48] + ".."
-
-            manufacturer = self.find_or_create_manufacturer(gpu["vendor"])
-            _ = nb.dcim.inventory_items.create(
-                device=self.device_id,
-                manufacturer=manufacturer.id,
-                discovered=True,
-                tags=[{"name": INVENTORY_TAG["gpu"]["name"]}],
-                name=gpu["product"],
-                description=gpu["description"],
-            )
-
-            logging.info("Creating GPU model {}".format(gpu["product"]))
-
-    def is_external_gpu(self, gpu):
-        is_3d_gpu = gpu["description"].startswith("3D")
-        return self.server.is_blade() and self.server.own_gpu_expansion_slot() and is_3d_gpu
-
-    def do_netbox_gpus(self):
+    def _slots_for_gpus(self):
         gpus = []
-        gpu_models = {}
         for gpu in self.lshw.get_hw_linux("gpu"):
             # Filters GPU if an expansion bay is detected:
             # The internal (VGA) GPU only goes into the blade inventory,
@@ -560,23 +560,23 @@ class Inventory:
             if config.expansion_as_device and self.update_expansion ^ self.is_external_gpu(gpu):
                 continue
             gpus.append(gpu)
-            gpu_models.setdefault(gpu["product"], 0)
-            gpu_models[gpu["product"]] += 1
 
-        nb_gpus = self.get_netbox_inventory(
-            device_id=self.device_id,
-            tag=INVENTORY_TAG["gpu"]["slug"],
-        )
-        nb_gpu_models = {}
-        for gpu in nb_gpus:
-            nb_gpu_models.setdefault(str(gpu), 0)
-            nb_gpu_models[str(gpu)] += 1
-        up_to_date = set(gpu_models) == set(nb_gpu_models)
-        if not gpus or not up_to_date:
-            for x in nb_gpus:
-                x.delete()
-        if gpus and not up_to_date:
-            self.create_netbox_gpus(gpus)
+        slots = {}
+        for i, gpu in enumerate(sorted(gpus, key=lambda x: str(x.get("product", ""))), start=1):
+            model = str(gpu.get("product") or "Unknown GPU")
+            if len(model) > 50:
+                model = model[:48] + ".."
+            slots[f"GPU {i}"] = {
+                "vendor": gpu.get("vendor") or "Unknown",
+                "model": model,
+                "part": "",
+                "serial": "",
+                "description": gpu.get("description") or "GPU",
+            }
+        return slots
+
+    def do_netbox_gpus(self):
+        self._sync_modules("gpu", self._slots_for_gpus())
 
     def create_or_update(self):
         if config.inventory is None or config.update_inventory is None:
@@ -589,4 +589,5 @@ class Inventory:
         self.do_netbox_gpus()
         self.do_netbox_disks()
         self.do_netbox_raid_cards()
+        self.purge_old_inventory_items()
         return True
