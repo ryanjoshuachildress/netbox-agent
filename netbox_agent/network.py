@@ -150,8 +150,6 @@ class Network:
                     )
                     slave_int.lag = bond_int
                     slave_int.save()
-        return False
-        return True
 
     def get_network_cards(self):
         return self.nics
