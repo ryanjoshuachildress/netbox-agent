@@ -703,10 +703,47 @@ class ServerNetwork(Network):
                 switch_ip, switch_interface, nb_server_interface
             )
         else:
-            nb_sw_int = nb_server_interface.cable.b_terminations[0]
-            nb_sw = nb_sw_int.device
+            cable = nb_server_interface.cable
+            ends = list(getattr(cable, "a_terminations", None) or [])
+            ends += list(getattr(cable, "b_terminations", None) or [])
+            nb_sw_int = next(
+                (
+                    t
+                    for t in ends
+                    if str(getattr(t, "object_type", "")) == "dcim.interface"
+                    and t.object_id != nb_server_interface.id
+                ),
+                None,
+            )
+            if nb_sw_int is None:
+                logging.info(f"Cable {cable.id} has no remote interface, recreating..")
+                nb.dcim.cables.get(cable.id).delete()
+                update = True
+                nb_server_interface = self.connect_interface_to_switch(
+                    switch_ip, switch_interface, nb_server_interface
+                )
+                return update, nb_server_interface
+
+            nb_sw = getattr(nb_sw_int, "device", None)
+            if nb_sw is None and getattr(nb_sw_int, "object_id", None) is not None:
+                nb_sw_int = nb.dcim.interfaces.get(nb_sw_int.object_id)
+                nb_sw = nb_sw_int.device if nb_sw_int is not None else None
+            if nb_sw is None:
+                logging.error(f"Remote end of cable {cable.id} is not associated to a device")
+                return update, nb_server_interface
+
             nb_mgmt_int = nb.dcim.interfaces.get(device_id=nb_sw.id, mgmt_only=True)
-            nb_mgmt_ip = nb.ipam.ip_addresses.get(interface_id=nb_mgmt_int.id)
+            nb_mgmt_ip = (
+                nb.ipam.ip_addresses.get(interface_id=nb_mgmt_int.id)
+                if nb_mgmt_int is not None
+                else None
+            )
+            if nb_mgmt_ip is None:
+                try:
+                    device_ips = list(nb.ipam.ip_addresses.filter(device_id=nb_sw.id))
+                except RequestError:
+                    device_ips = []
+                nb_mgmt_ip = device_ips[0] if device_ips else None
             if nb_mgmt_ip is None:
                 logging.error(f"Switch {switch_ip} does not have IP on its management interface")
                 return update, nb_server_interface
@@ -716,10 +753,10 @@ class ServerNetwork(Network):
             if nb_mgmt_ip != switch_ip or nb_sw_int.name != switch_interface:
                 logging.info("Netbox cable is not connected to correct ports, fixing..")
                 logging.info(
-                    f"Deleting cable {nb_server_interface.cable.id} from {nb_server_interface.name} to {nb_sw_int.name} of "
+                    f"Deleting cable {cable.id} from {nb_server_interface.name} to {nb_sw_int.name} of "
                     f"{nb_mgmt_ip}"
                 )
-                cable = nb.dcim.cables.get(nb_server_interface.cable.id)
+                cable = nb.dcim.cables.get(cable.id)
                 cable.delete()
                 update = True
                 nb_server_interface = self.connect_interface_to_switch(
