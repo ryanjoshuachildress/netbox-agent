@@ -695,6 +695,23 @@ class ServerNetwork(Network):
         )
         return nb_server_interface
 
+    @staticmethod
+    def _termination_end(t):
+        data = t.serialize()
+        obj = data.get("object")
+        obj = obj if isinstance(obj, dict) else {}
+        otype = str(data.get("object_type") or obj.get("object_type") or "")
+        if otype and "dcim.interface" not in otype:
+            return None
+        end_id = data.get("object_id") or obj.get("id") or data.get("id")
+        if end_id is None:
+            return None
+        name = obj.get("name") or obj.get("display") or data.get("name") or data.get("display")
+        device = data.get("device") or obj.get("device")
+        if isinstance(device, dict):
+            device = device.get("id")
+        return {"id": end_id, "name": name, "device_id": device}
+
     def create_or_update_cable(self, switch_ip, switch_interface, nb_server_interface):
         update = False
         if nb_server_interface.cable is None:
@@ -706,16 +723,23 @@ class ServerNetwork(Network):
             cable = nb_server_interface.cable
             ends = list(getattr(cable, "a_terminations", None) or [])
             ends += list(getattr(cable, "b_terminations", None) or [])
-            nb_sw_int = next(
-                (
-                    t
-                    for t in ends
-                    if str(getattr(t, "object_type", "")) == "dcim.interface"
-                    and t.object_id != nb_server_interface.id
-                ),
-                None,
-            )
-            if nb_sw_int is None:
+            if any("/circuits/" in str(getattr(t, "url", "") or "") for t in ends):
+                logging.error(f"Cable {cable.id} terminates to a circuit, skipping")
+                return update, nb_server_interface
+
+            nb_sw_id = None
+            nb_sw_name = None
+            for t in ends:
+                end = self._termination_end(t)
+                if end is None:
+                    continue
+                if end["id"] is None or end["id"] == nb_server_interface.id:
+                    continue
+                nb_sw_id = end["device_id"]
+                nb_sw_name = end["name"]
+                break
+
+            if nb_sw_id is None:
                 logging.info(f"Cable {cable.id} has no remote interface, recreating..")
                 nb.dcim.cables.get(cable.id).delete()
                 update = True
@@ -724,15 +748,7 @@ class ServerNetwork(Network):
                 )
                 return update, nb_server_interface
 
-            nb_sw = getattr(nb_sw_int, "device", None)
-            if nb_sw is None and getattr(nb_sw_int, "object_id", None) is not None:
-                nb_sw_int = nb.dcim.interfaces.get(nb_sw_int.object_id)
-                nb_sw = nb_sw_int.device if nb_sw_int is not None else None
-            if nb_sw is None:
-                logging.error(f"Remote end of cable {cable.id} is not associated to a device")
-                return update, nb_server_interface
-
-            nb_mgmt_int = nb.dcim.interfaces.get(device_id=nb_sw.id, mgmt_only=True)
+            nb_mgmt_int = nb.dcim.interfaces.get(device_id=nb_sw_id, mgmt_only=True)
             nb_mgmt_ip = (
                 nb.ipam.ip_addresses.get(interface_id=nb_mgmt_int.id)
                 if nb_mgmt_int is not None
@@ -740,7 +756,7 @@ class ServerNetwork(Network):
             )
             if nb_mgmt_ip is None:
                 try:
-                    device_ips = list(nb.ipam.ip_addresses.filter(device_id=nb_sw.id))
+                    device_ips = list(nb.ipam.ip_addresses.filter(device_id=nb_sw_id))
                 except RequestError:
                     device_ips = []
                 nb_mgmt_ip = device_ips[0] if device_ips else None
@@ -750,10 +766,10 @@ class ServerNetwork(Network):
 
             # Netbox IP is always IP/Netmask
             nb_mgmt_ip = nb_mgmt_ip.address.split("/")[0]
-            if nb_mgmt_ip != switch_ip or nb_sw_int.name != switch_interface:
+            if nb_mgmt_ip != switch_ip or nb_sw_name != switch_interface:
                 logging.info("Netbox cable is not connected to correct ports, fixing..")
                 logging.info(
-                    f"Deleting cable {cable.id} from {nb_server_interface.name} to {nb_sw_int.name} of "
+                    f"Deleting cable {cable.id} from {nb_server_interface.name} to {nb_sw_name} of "
                     f"{nb_mgmt_ip}"
                 )
                 cable = nb.dcim.cables.get(cable.id)
