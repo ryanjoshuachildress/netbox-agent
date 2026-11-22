@@ -66,6 +66,13 @@ class LLDP:
 
     def get_switch_vlan(self, interface):
         # lldp.eth0.vlan.vlan-id=296
-        if self.data.get("lldp", {}).get(interface) is None:
+        vlans = self.data.get("lldp", {}).get(interface, {}).get("vlan")
+        if not vlans:
             return None
-        return self.data["lldp"][interface]["vlan"]
+        valid = {}
+        for vid, infos in vlans.items():
+            try:
+                valid[int(vid)] = infos
+            except (TypeError, ValueError):
+                logging.warning(f"Ignoring LLDP vlan with invalid vid {vid!r} on {interface}")
+        return valid
