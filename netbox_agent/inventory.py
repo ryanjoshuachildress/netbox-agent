@@ -114,9 +114,7 @@ class Inventory:
             description=description,
         )
 
-        logging.info(
-            f"Creating inventory item {vendor} {name}/{serial} {description} "
-        )
+        logging.info(f"Creating inventory item {vendor} {name}/{serial} {description} ")
 
     def get_hw_motherboards(self):
         motherboards = []
@@ -178,9 +176,7 @@ class Inventory:
         # use the serial_number has the comparison element
         for nb_interface in nb_interfaces:
             if nb_interface.serial not in [x["serial"] for x in interfaces]:
-                logging.info(
-                    f"Deleting unknown interface {nb_interface.serial}"
-                )
+                logging.info(f"Deleting unknown interface {nb_interface.serial}")
                 nb_interface.delete()
 
         # create interfaces that are not in netbox
@@ -253,9 +249,7 @@ class Inventory:
             serial=f"{serial}",
             description="RAID Card",
         )
-        logging.info(
-            f"Creating RAID Card {name} (SN: {serial})"
-        )
+        logging.info(f"Creating RAID Card {name} (SN: {serial})")
         return nb_raid_card
 
     def do_netbox_raid_cards(self):
@@ -278,9 +272,7 @@ class Inventory:
         # use the serial_number has the comparison element
         for nb_raid_card in nb_raid_cards:
             if nb_raid_card.serial not in [x.get_serial_number() for x in raid_cards]:
-                logging.info(
-                    f"Deleting unknown locally RAID Card {nb_raid_card.serial}"
-                )
+                logging.info(f"Deleting unknown locally RAID Card {nb_raid_card.serial}")
                 nb_raid_card.delete()
 
         # create card that are not in netbox
@@ -482,9 +474,7 @@ class Inventory:
         # Delete disk modules that are in NetBox but no longer present locally
         for nb_disk in nb_disks:
             if nb_disk.serial not in disk_serials or config.force_disk_refresh:
-                logging.info(
-                    f"Deleting unknown locally Disk Module {nb_disk.serial}"
-                )
+                logging.info(f"Deleting unknown locally Disk Module {nb_disk.serial}")
                 nb_disk.delete()
 
         if config.force_disk_refresh:
@@ -532,9 +522,7 @@ class Inventory:
 
         for nb_memory in nb_memories:
             if nb_memory.serial not in [x["serial"] for x in memories]:
-                logging.info(
-                    f"Deleting unknown locally Memory {nb_memory.serial}"
-                )
+                logging.info(f"Deleting unknown locally Memory {nb_memory.serial}")
                 nb_memory.delete()
 
         for memory in memories:
@@ -590,11 +578,10 @@ class Inventory:
         if gpus and not up_to_date:
             self.create_netbox_gpus(gpus)
 
-
-def create_or_update(self):
-    if config.inventory is None or config.update_inventory is None:
-        return False
-    if self.update_expansion is False:
-        # Disabled for NetBox 4.7.5 (dcim.inventory_items removed)
-        self.do_netbox_disks()
-    return True
+    def create_or_update(self):
+        if config.inventory is None or config.update_inventory is None:
+            return False
+        if self.update_expansion is False:
+            # Disabled for NetBox 4.7.5 (dcim.inventory_items removed)
+            self.do_netbox_disks()
+        return True
