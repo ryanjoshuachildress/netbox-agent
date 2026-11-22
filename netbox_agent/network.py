@@ -461,8 +461,11 @@ class Network:
         for nic in list(nb_nics):
             if self._nic_identifier(nic) not in local_nics:
                 logging.info(f"Deleting netbox interface {nic.name} because not present locally")
-                nb_nics.remove(nic)
-                nic.delete()
+                try:
+                    nic.delete()
+                    nb_nics.remove(nic)
+                except RequestError as e:
+                    logging.warning(f"Cannot delete netbox interface {nic.name}, skipping: {e}")
 
         # delete IP on netbox that are not known on this server
         if len(nb_nics):
