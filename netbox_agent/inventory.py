@@ -5,6 +5,7 @@ from netbox_agent.misc import get_vendor, is_tool
 from netbox_agent.raid.hp import HPRaid
 from netbox_agent.raid.omreport import OmreportRaid
 from netbox_agent.raid.storcli import StorcliRaid
+import sys
 import traceback
 import pynetbox
 import logging
@@ -463,9 +464,21 @@ class Inventory:
             f.close()
 
     def do_netbox_disks(self):
-        nb_disks = self.get_netbox_inventory(
-            device_id=self.device_id, tag=INVENTORY_TAG["disk"]["slug"]
-        )
+        try:
+            nb_disks = list(
+                nb.dcim.modules.filter(
+                    device_id=self.device_id,
+                    tag=INVENTORY_TAG["disk"]["slug"],
+                )
+            )
+        except pynetbox.core.query.RequestError:
+            logging.info(
+                "Tag {tag} is missing, returning empty array.".format(
+                    tag=INVENTORY_TAG["disk"]["slug"]
+                )
+            )
+            nb_disks = []
+
         disks = self.get_hw_disks()
         if config.dump_disks_map:
             try:
@@ -473,25 +486,28 @@ class Inventory:
             except Exception as e:
                 logging.error("Failed to dump disks map: {}".format(e))
                 logging.debug(traceback.format_exc())
+
         disk_serials = [d["SN"] for d in disks if "SN" in d]
 
-        # delete disks that are in netbox but not locally
-        # use the serial_number has the comparison element
+        # Delete disk modules that are in NetBox but no longer present locally
         for nb_disk in nb_disks:
             if nb_disk.serial not in disk_serials or config.force_disk_refresh:
                 logging.info(
-                    "Deleting unknown locally Disk {serial}".format(
+                    "Deleting unknown locally Disk Module {serial}".format(
                         serial=nb_disk.serial,
                     )
                 )
                 nb_disk.delete()
 
         if config.force_disk_refresh:
-            nb_disks = self.get_netbox_inventory(
-                device_id=self.device_id, tag=INVENTORY_TAG["disk"]["slug"]
+            nb_disks = list(
+                nb.dcim.modules.filter(
+                    device_id=self.device_id,
+                    tag=INVENTORY_TAG["disk"]["slug"],
+                )
             )
 
-        # create disks that are not in netbox
+        # Create disk modules that are not in NetBox
         for disk in disks:
             if disk.get("SN") not in [d.serial for d in nb_disks]:
                 self.create_netbox_disk(disk)
@@ -587,16 +603,10 @@ class Inventory:
                 x.delete()
         if gpus and not up_to_date:
             self.create_netbox_gpus(gpus)
-
-    def create_or_update(self):
-        if config.inventory is None or config.update_inventory is None:
-            return False
-        if self.update_expansion is False:
-            self.do_netbox_cpus()
-            self.do_netbox_memories()
-            self.do_netbox_interfaces()
-            self.do_netbox_motherboard()
-        self.do_netbox_gpus()
+def create_or_update(self):
+    if config.inventory is None or config.update_inventory is None:
+        return False
+    if self.update_expansion is False:
+        # Disabled for NetBox 4.7.5 (dcim.inventory_items removed)
         self.do_netbox_disks()
-        self.do_netbox_raid_cards()
-        return True
+    return True
