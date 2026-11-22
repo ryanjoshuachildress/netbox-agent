@@ -277,14 +277,17 @@ class Network:
 
     def update_interface_macs(self, nic, macs):
         nb_macs = list(self.nb_net.mac_addresses.filter(interface_id=nic.id))
-        # Clean
+        wanted_macs = {str(m).lower() for m in macs}
+        grouped = {}
         for nb_mac in nb_macs:
-            if nb_mac.mac_address not in macs:
+            grouped.setdefault(str(nb_mac.mac_address).lower(), []).append(nb_mac)
+        for mac, objs in grouped.items():
+            extra_macs = objs if mac not in wanted_macs else objs[1:]
+            for nb_mac in extra_macs:
                 logging.debug(f"Deleting extra MAC {nb_mac} from {nic}")
                 nb_mac.delete()
-        # Add missing
         for mac in macs:
-            if mac not in {nb_mac.mac_address for nb_mac in nb_macs}:
+            if str(mac).lower() not in grouped:
                 logging.debug(f"Adding MAC {mac} to {nic}")
                 self.nb_net.mac_addresses.create(
                     {
@@ -520,7 +523,26 @@ class Network:
                 if version.parse(nb.version) < version.parse("4.2"):
                     interface.mac_address = nic["mac"]
                 else:
-                    interface.primary_mac_address = {"mac_address": nic["mac"]}
+                    mac_obj = next(
+                        (
+                            m
+                            for m in self.nb_net.mac_addresses.filter(interface_id=interface.id)
+                            if str(m.mac_address).lower() == nic["mac"].lower()
+                        ),
+                        None,
+                    )
+                    if mac_obj is None:
+                        mac_obj = self.nb_net.mac_addresses.create(
+                            {
+                                "mac_address": nic["mac"],
+                                "assigned_object_type": "dcim.interface",
+                                "assigned_object_id": interface.id,
+                            }
+                        )
+                    interface.primary_mac_address = {
+                        "id": mac_obj.id,
+                        "mac_address": mac_obj.mac_address,
+                    }
                 nic_update += 1
 
             if hasattr(interface, "mtu"):
