@@ -345,7 +345,8 @@ class Network:
             interface.save()
 
         # cable the interface
-        if config.network.lldp and isinstance(self, ServerNetwork):
+        virtual_type = self.dcim_choices["interface:type"]["Virtual"]
+        if config.network.lldp and isinstance(self, ServerNetwork) and nic_type != virtual_type:
             switch_ip = self.lldp.get_switch_ip(interface.name)
             switch_interface = self.lldp.get_switch_port(interface.name)
 
