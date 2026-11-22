@@ -30,24 +30,22 @@ class LocationBase:
                 loader = importlib.machinery.SourceFileLoader("driver_file", self.driver_file)
                 self.driver = loader.load_module()
             except ImportError:
-                raise ImportError("Couldn't import {} as a module".format(self.driver_file))
+                raise ImportError(f"Couldn't import {self.driver_file} as a module")
         else:
             if self.driver:
                 try:
-                    self.driver = importlib.import_module(
-                        "netbox_agent.drivers.{}".format(self.driver)
-                    )
+                    self.driver = importlib.import_module(f"netbox_agent.drivers.{self.driver}")
                 except ImportError:
-                    raise ImportError("Driver {} doesn't exists".format(self.driver))
+                    raise ImportError(f"Driver {self.driver} doesn't exists")
 
     def get(self):
         if self.driver is None:
             return None
         if not hasattr(self.driver, "get"):
             raise Exception(
-                "Your driver {} doesn't have a get() function, please fix it".format(self.driver)
+                f"Your driver {self.driver} doesn't have a get() function, please fix it"
             )
-        return getattr(self.driver, "get")(self.driver_value, self.regex)
+        return self.driver.get(self.driver_value, self.regex)
 
 
 class Tenant(LocationBase):

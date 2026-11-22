@@ -1,9 +1,10 @@
-from netbox_agent.raid.base import Raid, RaidController
-from netbox_agent.misc import get_vendor
-from netbox_agent.config import config
-import subprocess
 import logging
 import re
+import subprocess
+
+from netbox_agent.config import config
+from netbox_agent.misc import get_vendor
+from netbox_agent.raid.base import Raid, RaidController
 
 REGEXP_CONTROLLER_HP = re.compile(r"Smart Array ([a-zA-Z0-9- ]+) in Slot ([0-9]+)")
 
@@ -50,7 +51,7 @@ def _parse_ctrl_output(lines):
         ctrl = REGEXP_CONTROLLER_HP.search(line)
         if ctrl is not None:
             slot = ctrl.group(2)
-            current_ctrl = "{} - Slot {}".format(ctrl.group(1), slot)
+            current_ctrl = f"{ctrl.group(1)} - Slot {slot}"
             controllers[current_ctrl] = {"Slot": slot}
             if "Embedded" not in line:
                 controllers[current_ctrl]["External"] = True
@@ -200,9 +201,7 @@ class HPRaidController(RaidController):
             ld = self.ldrives.get(array)
             if ld is None:
                 logging.error(
-                    "Failed to find array information for physical drive {}. Ignoring.".format(
-                        name
-                    )
+                    f"Failed to find array information for physical drive {name}. Ignoring."
                 )
                 continue
             attrs["custom_fields"].update(ld)

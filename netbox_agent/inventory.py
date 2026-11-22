@@ -1,3 +1,11 @@
+import json
+import logging
+import re
+import sys
+import traceback
+
+import pynetbox
+
 from netbox_agent.config import config
 from netbox_agent.config import netbox_instance as nb
 from netbox_agent.lshw import LSHW
@@ -5,13 +13,6 @@ from netbox_agent.misc import get_vendor, is_tool
 from netbox_agent.raid.hp import HPRaid
 from netbox_agent.raid.omreport import OmreportRaid
 from netbox_agent.raid.storcli import StorcliRaid
-import sys
-import traceback
-import pynetbox
-import logging
-import json
-import re
-
 
 INVENTORY_TAG = {
     "cpu": {"name": "hw:cpu", "slug": "hw-cpu"},
@@ -81,13 +82,13 @@ class Inventory:
             name=name,
         )
         if not manufacturer:
-            logging.info("Creating missing manufacturer {name}".format(name=name))
+            logging.info(f"Creating missing manufacturer {name}")
             manufacturer = nb.dcim.manufacturers.create(
                 name=name,
                 slug=re.sub("[^A-Za-z0-9]+", "-", name).lower(),
             )
 
-            logging.info("Creating missing manufacturer {name}".format(name=name))
+            logging.info(f"Creating missing manufacturer {name}")
 
         return manufacturer
 
@@ -95,7 +96,7 @@ class Inventory:
         try:
             items = nb.dcim.inventory_items.filter(device_id=device_id, tag=tag)
         except pynetbox.core.query.RequestError:
-            logging.info("Tag {tag} is missing, returning empty array.".format(tag=tag))
+            logging.info(f"Tag {tag} is missing, returning empty array.")
             items = []
 
         return list(items)
@@ -108,13 +109,13 @@ class Inventory:
             manufacturer=manufacturer.id,
             discovered=True,
             tags=tags,
-            name="{}".format(name),
-            serial="{}".format(serial),
+            name=f"{name}",
+            serial=f"{serial}",
             description=description,
         )
 
         logging.info(
-            "Creating inventory item {} {}/{} {} ".format(vendor, name, serial, description)
+            f"Creating inventory item {vendor} {name}/{serial} {description} "
         )
 
     def get_hw_motherboards(self):
@@ -123,8 +124,8 @@ class Inventory:
         m = {}
         m["serial"] = self.lshw.motherboard_serial
         m["vendor"] = self.lshw.vendor
-        m["name"] = "{} {}".format(self.lshw.vendor, self.lshw.motherboard)
-        m["description"] = "{} Motherboard".format(self.lshw.motherboard)
+        m["name"] = f"{self.lshw.vendor} {self.lshw.motherboard}"
+        m["description"] = f"{self.lshw.motherboard} Motherboard"
 
         motherboards.append(m)
 
@@ -139,10 +140,7 @@ class Inventory:
         for nb_motherboard in nb_motherboards:
             if nb_motherboard.serial not in [x["serial"] for x in motherboards]:
                 logging.info(
-                    "Deleting unknown motherboard {motherboard}/{serial}".format(
-                        motherboard=self.lshw.motherboard,
-                        serial=nb_motherboard.serial,
-                    )
+                    f"Deleting unknown motherboard {self.lshw.motherboard}/{nb_motherboard.serial}"
                 )
                 nb_motherboard.delete()
 
@@ -181,9 +179,7 @@ class Inventory:
         for nb_interface in nb_interfaces:
             if nb_interface.serial not in [x["serial"] for x in interfaces]:
                 logging.info(
-                    "Deleting unknown interface {serial}".format(
-                        serial=nb_interface.serial,
-                    )
+                    f"Deleting unknown interface {nb_interface.serial}"
                 )
                 nb_interface.delete()
 
@@ -253,15 +249,12 @@ class Inventory:
             discovered=True,
             manufacturer=manufacturer.id if manufacturer else None,
             tags=[{"name": INVENTORY_TAG["raid_card"]["name"]}],
-            name="{}".format(name),
-            serial="{}".format(serial),
+            name=f"{name}",
+            serial=f"{serial}",
             description="RAID Card",
         )
         logging.info(
-            "Creating RAID Card {name} (SN: {serial})".format(
-                name=name,
-                serial=serial,
-            )
+            f"Creating RAID Card {name} (SN: {serial})"
         )
         return nb_raid_card
 
@@ -286,9 +279,7 @@ class Inventory:
         for nb_raid_card in nb_raid_cards:
             if nb_raid_card.serial not in [x.get_serial_number() for x in raid_cards]:
                 logging.info(
-                    "Deleting unknown locally RAID Card {serial}".format(
-                        serial=nb_raid_card.serial,
-                    )
+                    f"Deleting unknown locally RAID Card {nb_raid_card.serial}"
                 )
                 nb_raid_card.delete()
 
@@ -345,7 +336,7 @@ class Inventory:
             size = round(int(disk.get("size") or 0) / 1073741824, 1)
             d = {
                 "name": "",
-                "Size": "{} GB".format(size),
+                "Size": f"{size} GB",
                 "logicalname": disk.get("logicalname"),
                 "description": disk.get("description"),
                 "SN": disk.get("serial"),
@@ -363,7 +354,7 @@ class Inventory:
         uniq = [x for x in disks if x["SN"] not in seen and not seen.add(x["SN"])]
         return uniq
 
-        def find_or_create_module_type(self, manufacturer, model, part_number=None, description=""):
+    def find_or_create_module_type(self, manufacturer, model, part_number=None, description=""):
         # NetBox ModuleType requires a manufacturer; default to "Generic" if missing
         if not manufacturer:
             manufacturer = self.find_or_create_manufacturer("Generic")
@@ -452,7 +443,6 @@ class Inventory:
             )
         )
 
-
     def dump_disks_map(self, disks):
         disk_map = [d["custom_fields"] for d in disks if "custom_fields" in d]
         if config.dump_disks_map == "-":
@@ -484,7 +474,7 @@ class Inventory:
             try:
                 self.dump_disks_map(disks)
             except Exception as e:
-                logging.error("Failed to dump disks map: {}".format(e))
+                logging.error(f"Failed to dump disks map: {e}")
                 logging.debug(traceback.format_exc())
 
         disk_serials = [d["SN"] for d in disks if "SN" in d]
@@ -493,9 +483,7 @@ class Inventory:
         for nb_disk in nb_disks:
             if nb_disk.serial not in disk_serials or config.force_disk_refresh:
                 logging.info(
-                    "Deleting unknown locally Disk Module {serial}".format(
-                        serial=nb_disk.serial,
-                    )
+                    f"Deleting unknown locally Disk Module {nb_disk.serial}"
                 )
                 nb_disk.delete()
 
@@ -545,9 +533,7 @@ class Inventory:
         for nb_memory in nb_memories:
             if nb_memory.serial not in [x["serial"] for x in memories]:
                 logging.info(
-                    "Deleting unknown locally Memory {serial}".format(
-                        serial=nb_memory.serial,
-                    )
+                    f"Deleting unknown locally Memory {nb_memory.serial}"
                 )
                 nb_memory.delete()
 
@@ -603,6 +589,8 @@ class Inventory:
                 x.delete()
         if gpus and not up_to_date:
             self.create_netbox_gpus(gpus)
+
+
 def create_or_update(self):
     if config.inventory is None or config.update_inventory is None:
         return False

@@ -17,7 +17,7 @@ from netbox_agent.lldp import LLDP
 VIRTUAL_NET_FOLDER = Path("/sys/devices/virtual/net")
 
 
-class Network(object):
+class Network:
     def __init__(self, server, *args, **kwargs):
         self.nics = []
 
@@ -30,7 +30,7 @@ class Network(object):
         self.dcim_choices = {}
         dcim_c = nb.dcim.interfaces.choices()
         for _choice_type in dcim_c:
-            key = "interface:{}".format(_choice_type)
+            key = f"interface:{_choice_type}"
             self.dcim_choices[key] = {}
             for choice in dcim_c[_choice_type]:
                 self.dcim_choices[key][choice["display_name"]] = choice["value"]
@@ -38,7 +38,7 @@ class Network(object):
         self.ipam_choices = {}
         ipam_c = nb.ipam.ip_addresses.choices()
         for _choice_type in ipam_c:
-            key = "ip-address:{}".format(_choice_type)
+            key = f"ip-address:{_choice_type}"
             self.ipam_choices[key] = {}
             for choice in ipam_c[_choice_type]:
                 self.ipam_choices[key][choice["display_name"]] = choice["value"]
@@ -50,13 +50,13 @@ class Network(object):
         nics = []
         for interface in os.listdir("/sys/class/net/"):
             # ignore if it's not a link (ie: bonding_masters etc)
-            if not os.path.islink("/sys/class/net/{}".format(interface)):
+            if not os.path.islink(f"/sys/class/net/{interface}"):
                 continue
 
             if config.network.ignore_interfaces and re.match(
                 config.network.ignore_interfaces, interface
             ):
-                logging.debug("Ignore interface {interface}".format(interface=interface))
+                logging.debug(f"Ignore interface {interface}")
                 continue
 
             ip_addr = netifaces.ifaddresses(interface).get(netifaces.AF_INET, [])
@@ -85,7 +85,7 @@ class Network(object):
             #   }
             #
             for addr in ip6_addr:
-                addr["addr"] = addr["addr"].replace("%{}".format(interface), "")
+                addr["addr"] = addr["addr"].replace(f"%{interface}", "")
                 addr["mask"] = addr["mask"].split("/")[0]
                 ip_addr.append(addr)
 
@@ -97,24 +97,22 @@ class Network(object):
             ):
                 mac = ethtool["mac_address"]
             else:
-                mac = open("/sys/class/net/{}/address".format(interface), "r").read().strip()
+                mac = open(f"/sys/class/net/{interface}/address", "r").read().strip()
                 if mac == "00:00:00:00:00:00":
                     mac = None
             if mac:
                 mac = mac.upper()
 
-            mtu = int(open("/sys/class/net/{}/mtu".format(interface), "r").read().strip())
+            mtu = int(open(f"/sys/class/net/{interface}/mtu", "r").read().strip())
             vlan = None
             if len(interface.split(".")) > 1:
                 vlan = int(interface.split(".")[1])
 
             bonding = False
             bonding_slaves = []
-            if os.path.isdir("/sys/class/net/{}/bonding".format(interface)):
+            if os.path.isdir(f"/sys/class/net/{interface}/bonding"):
                 bonding = True
-                bonding_slaves = (
-                    open("/sys/class/net/{}/bonding/slaves".format(interface)).read().split()
-                )
+                bonding_slaves = open(f"/sys/class/net/{interface}/bonding/slaves").read().split()
 
             virtual = Path(f"/sys/class/net/{interface}").resolve().parent == VIRTUAL_NET_FOLDER
 
@@ -140,7 +138,7 @@ class Network(object):
         bonding_nics = (x for x in self.nics if x["bonding"])
         for nic in bonding_nics:
             bond_int = self.get_netbox_network_card(nic)
-            logging.debug("Setting slave interface for {name}".format(name=bond_int.name))
+            logging.debug(f"Setting slave interface for {bond_int.name}")
             for slave_int in (
                 self.get_netbox_network_card(slave_nic)
                 for slave_nic in self.nics
@@ -148,14 +146,11 @@ class Network(object):
             ):
                 if slave_int.lag is None or slave_int.lag.id != bond_int.id:
                     logging.debug(
-                        "Settting interface {name} as slave of {master}".format(
-                            name=slave_int.name, master=bond_int.name
-                        )
+                        f"Settting interface {slave_int.name} as slave of {bond_int.name}"
                     )
                     slave_int.lag = bond_int
                     slave_int.save()
-        else:
-            return False
+        return False
         return True
 
     def get_network_cards(self):
@@ -217,7 +212,7 @@ class Network(object):
         vlan = vlans[0] if vlans else None
         if vlan is None:
             vlan = nb.ipam.vlans.create(
-                name="VLAN {}".format(vlan_id),
+                name=f"VLAN {vlan_id}",
                 vid=vlan_id,
             )
         return vlan
@@ -241,9 +236,7 @@ class Network(object):
             and lldp_vlan is None
             and (interface.mode is not None or len(interface.tagged_vlans) > 0)
         ):
-            logging.info(
-                "Interface {interface} is not tagged, reseting mode".format(interface=interface)
-            )
+            logging.info(f"Interface {interface} is not tagged, reseting mode")
             update = True
             interface.mode = None
             interface.tagged_vlans = []
@@ -261,9 +254,7 @@ class Network(object):
                 or int(interface.tagged_vlans[0].vid) != int(vlan_id)
             )
         ):
-            logging.info(
-                "Resetting tagged VLAN(s) on interface {interface}".format(interface=interface)
-            )
+            logging.info(f"Resetting tagged VLAN(s) on interface {interface}")
             update = True
             nb_vlan = self.get_or_create_vlan(vlan_id)
             interface.mode = self.dcim_choices["interface:mode"]["Tagged"]
@@ -271,18 +262,14 @@ class Network(object):
             interface.untagged_vlan = None
         # Finally if LLDP reports a vlan-id with the pvid attribute
         elif lldp_vlan:
-            pvid_vlan = [
-                key for (key, value) in lldp_vlan.items() if "pvid" in value and value["pvid"]
-            ]
+            pvid_vlan = [key for (key, value) in lldp_vlan.items() if value.get("pvid")]
             if len(pvid_vlan) > 0 and (
                 interface.mode is None
                 or interface.mode.value != self.dcim_choices["interface:mode"]["Access"]
                 or interface.untagged_vlan is None
                 or interface.untagged_vlan.vid != int(pvid_vlan[0])
             ):
-                logging.info(
-                    "Resetting access VLAN on interface {interface}".format(interface=interface)
-                )
+                logging.info(f"Resetting access VLAN on interface {interface}")
                 update = True
                 nb_vlan = self.get_or_create_vlan(pvid_vlan[0])
                 interface.mode = self.dcim_choices["interface:mode"]["Access"]
@@ -294,12 +281,12 @@ class Network(object):
         # Clean
         for nb_mac in nb_macs:
             if nb_mac.mac_address not in macs:
-                logging.debug("Deleting extra MAC {mac} from {nic}".format(mac=nb_mac, nic=nic))
+                logging.debug(f"Deleting extra MAC {nb_mac} from {nic}")
                 nb_mac.delete()
         # Add missing
         for mac in macs:
             if mac not in {nb_mac.mac_address for nb_mac in nb_macs}:
-                logging.debug("Adding MAC {mac} to {nic}".format(mac=mac, nic=nic))
+                logging.debug(f"Adding MAC {mac} to {nic}")
                 self.nb_net.mac_addresses.create(
                     {
                         "mac_address": mac,
@@ -385,7 +372,7 @@ class Network(object):
             address=ip,
         )
         if not netbox_ips:
-            logging.info("Create new IP {ip} on {interface}".format(ip=ip, interface=interface))
+            logging.info(f"Create new IP {ip} on {interface}")
             query_params = {
                 "address": ip,
                 "status": "active",
@@ -399,20 +386,20 @@ class Network(object):
         netbox_ip = list(netbox_ips)[0]
         # If IP exists in anycast
         if netbox_ip.role and netbox_ip.role.label == "Anycast":
-            logging.debug("IP {} is Anycast..".format(ip))
+            logging.debug(f"IP {ip} is Anycast..")
             unassigned_anycast_ip = [x for x in netbox_ips if x.interface is None]
             assigned_anycast_ip = [
                 x for x in netbox_ips if x.interface and x.interface.id == interface.id
             ]
             # use the first available anycast ip
             if len(unassigned_anycast_ip):
-                logging.info("Assigning existing Anycast IP {} to interface".format(ip))
+                logging.info(f"Assigning existing Anycast IP {ip} to interface")
                 netbox_ip = unassigned_anycast_ip[0]
                 netbox_ip.interface = interface
                 netbox_ip.save()
             # or if everything is assigned to other servers
             elif not len(assigned_anycast_ip):
-                logging.info("Creating Anycast IP {} and assigning it to interface".format(ip))
+                logging.info(f"Creating Anycast IP {ip} and assigning it to interface")
                 query_params = {
                     "address": ip,
                     "status": "active",
@@ -426,21 +413,13 @@ class Network(object):
         else:
             assigned_object = getattr(netbox_ip, "assigned_object", None)
             if not assigned_object:
-                logging.info(
-                    "Assigning existing IP {ip} to {interface}".format(ip=ip, interface=interface)
-                )
+                logging.info(f"Assigning existing IP {ip} to {interface}")
             elif assigned_object.id != interface.id:
                 old_interface = getattr(netbox_ip, "assigned_object", "n/a")
                 logging.info(
-                    "Detected interface change for ip {ip}: old interface is "
-                    "{old_interface} (id: {old_id}), new interface is {new_interface} "
-                    " (id: {new_id})".format(
-                        old_interface=old_interface,
-                        new_interface=interface,
-                        old_id=netbox_ip.id,
-                        new_id=interface.id,
-                        ip=netbox_ip.address,
-                    )
+                    f"Detected interface change for ip {netbox_ip.address}: old interface is "
+                    f"{old_interface} (id: {netbox_ip.id}), new interface is {interface} "
+                    f" (id: {interface.id})"
                 )
             else:
                 return netbox_ip
@@ -471,7 +450,7 @@ class Network(object):
 
     def create_or_update_netbox_network_cards(self):
         if config.update_all is None or config.update_network is None:
-            return None
+            return
         logging.debug("Creating/Updating NIC...")
 
         # delete unknown interface
@@ -479,11 +458,7 @@ class Network(object):
         local_nics = [self._nic_identifier(x) for x in self.nics]
         for nic in list(nb_nics):
             if self._nic_identifier(nic) not in local_nics:
-                logging.info(
-                    "Deleting netbox interface {name} because not present locally".format(
-                        name=nic.name
-                    )
-                )
+                logging.info(f"Deleting netbox interface {nic.name} because not present locally")
                 nb_nics.remove(nic)
                 nic.delete()
 
@@ -504,9 +479,7 @@ class Network(object):
             for netbox_ip in netbox_ips:
                 if netbox_ip.address not in all_local_ips:
                     logging.info(
-                        "Unassigning IP {ip} from {interface}".format(
-                            ip=netbox_ip.address, interface=netbox_ip.assigned_object
-                        )
+                        f"Unassigning IP {netbox_ip.address} from {netbox_ip.assigned_object}"
                     )
                     netbox_ip.assigned_object_type = None
                     netbox_ip.assigned_object_id = None
@@ -517,9 +490,7 @@ class Network(object):
             interface = self.get_netbox_network_card(nic)
 
             if not interface:
-                logging.info(
-                    "Interface {nic} not found, creating..".format(nic=self._nic_identifier(nic))
-                )
+                logging.info(f"Interface {self._nic_identifier(nic)} not found, creating..")
                 interface = self.create_netbox_nic(nic)
 
             nic_update = 0
@@ -616,7 +587,7 @@ class Network(object):
 
 class ServerNetwork(Network):
     def __init__(self, server, *args, **kwargs):
-        super(ServerNetwork, self).__init__(server, args, kwargs)
+        super().__init__(server, args, kwargs)
 
         if config.network.ipmi:
             self.ipmi = self.get_ipmi()
@@ -640,29 +611,23 @@ class ServerNetwork(Network):
 
     def connect_interface_to_switch(self, switch_ip, switch_interface, nb_server_interface):
         logging.info(
-            "Interface {} is not connected to switch, trying to connect..".format(
-                nb_server_interface.name
-            )
+            f"Interface {nb_server_interface.name} is not connected to switch, trying to connect.."
         )
         nb_mgmt_ip = nb.ipam.ip_addresses.get(
             address=switch_ip,
         )
         if not nb_mgmt_ip:
-            logging.error("Switch IP {} cannot be found in Netbox".format(switch_ip))
+            logging.error(f"Switch IP {switch_ip} cannot be found in Netbox")
             return nb_server_interface
 
         try:
             nb_switch = nb_mgmt_ip.assigned_object.device
             logging.info(
-                "Found a switch in Netbox based on LLDP infos: {} (id: {})".format(
-                    switch_ip, nb_switch.id
-                )
+                f"Found a switch in Netbox based on LLDP infos: {switch_ip} (id: {nb_switch.id})"
             )
         except KeyError:
             logging.error(
-                "Switch IP {} is found but not associated to a Netbox Switch Device".format(
-                    switch_ip
-                )
+                f"Switch IP {switch_ip} is found but not associated to a Netbox Switch Device"
             )
             return nb_server_interface
 
@@ -672,15 +637,10 @@ class ServerNetwork(Network):
             name=switch_interface,
         )
         if nb_switch_interface is None:
-            logging.error("Switch interface {} cannot be found".format(switch_interface))
+            logging.error(f"Switch interface {switch_interface} cannot be found")
             return nb_server_interface
 
-        logging.info(
-            "Found interface {} on switch {}".format(
-                switch_interface,
-                switch_ip,
-            )
-        )
+        logging.info(f"Found interface {switch_interface} on switch {switch_ip}")
         cable = nb.dcim.cables.create(
             a_terminations=[
                 {"object_type": "dcim.interface", "object_id": nb_server_interface.id},
@@ -691,11 +651,7 @@ class ServerNetwork(Network):
         )
         nb_server_interface.cable = cable
         logging.info(
-            "Connected interface {interface} with {switch_interface} of {switch_ip}".format(
-                interface=nb_server_interface.name,
-                switch_interface=switch_interface,
-                switch_ip=switch_ip,
-            )
+            f"Connected interface {nb_server_interface.name} with {switch_interface} of {switch_ip}"
         )
         return nb_server_interface
 
@@ -712,11 +668,7 @@ class ServerNetwork(Network):
             nb_mgmt_int = nb.dcim.interfaces.get(device_id=nb_sw.id, mgmt_only=True)
             nb_mgmt_ip = nb.ipam.ip_addresses.get(interface_id=nb_mgmt_int.id)
             if nb_mgmt_ip is None:
-                logging.error(
-                    "Switch {switch_ip} does not have IP on its management interface".format(
-                        switch_ip=switch_ip,
-                    )
-                )
+                logging.error(f"Switch {switch_ip} does not have IP on its management interface")
                 return update, nb_server_interface
 
             # Netbox IP is always IP/Netmask
@@ -724,13 +676,8 @@ class ServerNetwork(Network):
             if nb_mgmt_ip != switch_ip or nb_sw_int.name != switch_interface:
                 logging.info("Netbox cable is not connected to correct ports, fixing..")
                 logging.info(
-                    "Deleting cable {cable_id} from {interface} to {switch_interface} of "
-                    "{switch_ip}".format(
-                        cable_id=nb_server_interface.cable.id,
-                        interface=nb_server_interface.name,
-                        switch_interface=nb_sw_int.name,
-                        switch_ip=nb_mgmt_ip,
-                    )
+                    f"Deleting cable {nb_server_interface.cable.id} from {nb_server_interface.name} to {nb_sw_int.name} of "
+                    f"{nb_mgmt_ip}"
                 )
                 cable = nb.dcim.cables.get(nb_server_interface.cable.id)
                 cable.delete()
@@ -743,7 +690,7 @@ class ServerNetwork(Network):
 
 class VirtualNetwork(Network):
     def __init__(self, server, *args, **kwargs):
-        super(VirtualNetwork, self).__init__(server, args, kwargs)
+        super().__init__(server, args, kwargs)
         self.server = server
         self.device = self.server.get_netbox_vm()
         self.nb_net = nb.virtualization
@@ -754,7 +701,7 @@ class VirtualNetwork(Network):
 
         dcim_c = nb.virtualization.interfaces.choices()
         for _choice_type in dcim_c:
-            key = "interface:{}".format(_choice_type)
+            key = f"interface:{_choice_type}"
             self.dcim_choices[key] = {}
             for choice in dcim_c[_choice_type]:
                 self.dcim_choices[key][choice["display_name"]] = choice["value"]

@@ -17,7 +17,7 @@ class SupermicroHost(ServerBase):
     """
 
     def __init__(self, *args, **kwargs):
-        super(SupermicroHost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.manufacturer = "Supermicro"
 
     def is_blade(self):
@@ -72,7 +72,7 @@ class SupermicroHost(ServerBase):
     def get_chassis_name(self):
         if not self.is_blade():
             return None
-        return "Chassis {}".format(self.get_chassis_service_tag())
+        return f"Chassis {self.get_chassis_service_tag()}"
 
     def get_expansion_product(self):
         """

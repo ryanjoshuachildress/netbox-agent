@@ -1,4 +1,10 @@
-import netbox_agent.dmidecode as dmidecode
+import logging
+import socket
+import subprocess
+import sys
+from pprint import pprint
+
+from netbox_agent import dmidecode
 from netbox_agent.config import config
 from netbox_agent.config import netbox_instance as nb
 from netbox_agent.hypervisor import Hypervisor
@@ -6,17 +12,12 @@ from netbox_agent.inventory import Inventory
 from netbox_agent.location import Datacenter, Rack, Tenant
 from netbox_agent.misc import (
     create_netbox_tags,
+    get_device_platform,
     get_device_role,
     get_device_type,
-    get_device_platform,
 )
 from netbox_agent.network import ServerNetwork
 from netbox_agent.power import PowerSupply
-from pprint import pprint
-import subprocess
-import logging
-import socket
-import sys
 
 
 class ServerBase:
@@ -71,7 +72,7 @@ class ServerBase:
             slug=dc,
         )
         if nb_dc is None:
-            logging.error("Site (slug: {}) has not been found".format(dc))
+            logging.error(f"Site (slug: {dc}) has not been found")
             sys.exit(1)
 
         return nb_dc
@@ -84,21 +85,13 @@ class ServerBase:
         update = False
         if dc and server.site and server.site.slug != nb_dc.slug:
             logging.info(
-                "Datacenter location has changed from {} to {}, updating".format(
-                    server.site.slug,
-                    nb_dc.slug,
-                )
+                f"Datacenter location has changed from {server.site.slug} to {nb_dc.slug}, updating"
             )
             update = True
             server.site = nb_dc.id
 
         if server.rack and nb_rack and server.rack.id != nb_rack.id:
-            logging.info(
-                "Rack location has changed from {} to {}, updating".format(
-                    server.rack,
-                    nb_rack,
-                )
-            )
+            logging.info(f"Rack location has changed from {server.rack} to {nb_rack}, updating")
             update = True
             server.rack = nb_rack
             if nb_rack is None:
@@ -158,7 +151,7 @@ class ServerBase:
 
     def get_hostname(self):
         if config.hostname_cmd is None:
-            return "{}".format(socket.gethostname())
+            return f"{socket.gethostname()}"
         return subprocess.getoutput(config.hostname_cmd)
 
     def is_blade(self):
@@ -195,7 +188,7 @@ class ServerBase:
         device_type = get_device_type(self.get_chassis())
         device_role = get_device_role(config.device.chassis_role)
         serial = self.get_chassis_service_tag()
-        logging.info("Creating chassis blade (serial: {serial})".format(serial=serial))
+        logging.info(f"Creating chassis blade (serial: {serial})")
         new_chassis = nb.dcim.devices.create(
             name=self.get_chassis_name(),
             device_type=device_type.id,
@@ -214,11 +207,7 @@ class ServerBase:
         device_type = get_device_type(self.get_product_name())
         serial = self.get_service_tag()
         hostname = self.get_hostname()
-        logging.info(
-            "Creating blade (serial: {serial}) {hostname} on chassis {chassis_serial}".format(
-                serial=serial, hostname=hostname, chassis_serial=chassis.serial
-            )
-        )
+        logging.info(f"Creating blade (serial: {serial}) {hostname} on chassis {chassis.serial}")
         new_blade = nb.dcim.devices.create(
             name=hostname,
             serial=serial,
@@ -239,9 +228,7 @@ class ServerBase:
         serial = self.get_expansion_service_tag()
         hostname = self.get_hostname() + " expansion"
         logging.info(
-            "Creating expansion (serial: {serial}) {hostname} on chassis {chassis_serial}".format(
-                serial=serial, hostname=hostname, chassis_serial=chassis.serial
-            )
+            f"Creating expansion (serial: {serial}) {hostname} on chassis {chassis.serial}"
         )
         new_blade = nb.dcim.devices.create(
             name=hostname,
@@ -271,14 +258,10 @@ class ServerBase:
         device_role = get_device_role(config.device.server_role)
         device_type = get_device_type(self.get_product_name())
         if not device_type:
-            raise Exception('Chassis "{}" doesn\'t exist'.format(self.get_chassis()))
+            raise Exception(f'Chassis "{self.get_chassis()}" doesn\'t exist')
         serial = self.get_service_tag()
         hostname = self.get_hostname()
-        logging.info(
-            "Creating server (serial: {serial}) {hostname}".format(
-                serial=serial, hostname=hostname
-            )
-        )
+        logging.info(f"Creating server (serial: {serial}) {hostname}")
         new_server = nb.dcim.devices.create(
             name=hostname,
             serial=serial,
@@ -320,9 +303,7 @@ class ServerBase:
         )
         if real_device_bays:
             logging.info(
-                "Setting device ({serial}) new slot on {slot} (Chassis {chassis_serial})..".format(
-                    serial=server.serial, slot=slot, chassis_serial=chassis.serial
-                )
+                f"Setting device ({server.serial}) new slot on {slot} (Chassis {chassis.serial}).."
             )
             # reset actual device bay if set
             if actual_device_bay:
@@ -337,7 +318,7 @@ class ServerBase:
             real_device_bay.installed_device = server
             real_device_bay.save()
         else:
-            logging.error("Could not find slot {slot} for chassis".format(slot=slot))
+            logging.error(f"Could not find slot {slot} for chassis")
 
     def _netbox_set_or_update_blade_expansion_slot(self, expansion, chassis, datacenter):
         # before everything check if right chassis
@@ -356,13 +337,11 @@ class ServerBase:
             name=slot,
         )
         if not real_device_bays:
-            logging.error("Could not find slot {slot} expansion for chassis".format(slot=slot))
+            logging.error(f"Could not find slot {slot} expansion for chassis")
             return
         logging.info(
-            "Setting device expansion ({serial}) new slot on {slot} "
-            "(Chassis {chassis_serial})..".format(
-                serial=expansion.serial, slot=slot, chassis_serial=chassis.serial
-            )
+            f"Setting device expansion ({expansion.serial}) new slot on {slot} "
+            f"(Chassis {chassis.serial}).."
         )
         # reset actual device bay if set
         if actual_device_bay:
@@ -534,7 +513,6 @@ class ServerBase:
             "NIC:",
         )
         pprint(self.network.get_network_cards())
-        pass
 
     def own_expansion_slot(self):
         """

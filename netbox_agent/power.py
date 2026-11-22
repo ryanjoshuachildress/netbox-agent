@@ -1,6 +1,6 @@
 import logging
 
-import netbox_agent.dmidecode as dmidecode
+from netbox_agent import dmidecode
 from netbox_agent.config import netbox_instance as nb
 
 PSU_DMI_TYPE = 39
@@ -58,7 +58,7 @@ class PowerSupply:
         delete = False
         for nb_psu in nb_psus:
             if nb_psu.name not in [x["name"] for x in psus]:
-                logging.info("Deleting unknown locally PSU {name}".format(name=nb_psu.name))
+                logging.info(f"Deleting unknown locally PSU {nb_psu.name}")
                 nb_psu.delete()
                 delete = True
 
@@ -114,10 +114,7 @@ class PowerSupply:
                 continue
             nb_psu.save()
             logging.info(
-                "Updated power consumption for PSU {}: {}W".format(
-                    nb_psu.name,
-                    nb_psu.allocated_draw,
-                )
+                f"Updated power consumption for PSU {nb_psu.name}: {nb_psu.allocated_draw}W"
             )
 
         return True

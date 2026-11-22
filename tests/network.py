@@ -1,4 +1,5 @@
 from netbox_agent.lldp import LLDP
+
 from tests.conftest import parametrize_with_fixtures
 
 

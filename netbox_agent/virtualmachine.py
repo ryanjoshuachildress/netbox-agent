@@ -1,15 +1,15 @@
 import json
 import os
 import subprocess
+from pprint import pprint
 
-import netbox_agent.dmidecode as dmidecode
+from netbox_agent import dmidecode
 from netbox_agent.config import config
 from netbox_agent.config import netbox_instance as nb
 from netbox_agent.location import Tenant
-from netbox_agent.logging import logging  # NOQA
-from netbox_agent.misc import create_netbox_tags, get_hostname, get_device_platform
+from netbox_agent.logging import logging
+from netbox_agent.misc import create_netbox_tags, get_device_platform, get_hostname
 from netbox_agent.network import VirtualNetwork
-from pprint import pprint
 
 
 def is_vm(dmi):
@@ -29,7 +29,7 @@ def is_vm(dmi):
     )
 
 
-class VirtualMachine(object):
+class VirtualMachine:
     def __init__(self, dmi=None):
         if dmi:
             self.dmi = dmi
@@ -161,4 +161,3 @@ class VirtualMachine(object):
             "NIC:",
         )
         pprint(self.network.get_network_cards())
-        pass

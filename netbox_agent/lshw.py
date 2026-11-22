@@ -1,8 +1,9 @@
-from netbox_agent.misc import is_tool
-import subprocess
-import logging
 import json
+import logging
+import subprocess
 import sys
+
+from netbox_agent.misc import is_tool
 
 
 class LSHW:
@@ -81,7 +82,7 @@ class LSHW:
                     if j.startswith("unknown"):
                         unkn_intfs.append(j)
 
-        unkn_name = "unknown{}".format(len(unkn_intfs))
+        unkn_name = f"unknown{len(unkn_intfs)}"
         self.interfaces.append(
             {
                 "name": obj.get("logicalname", unkn_name),

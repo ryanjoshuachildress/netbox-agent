@@ -1,9 +1,10 @@
-from netbox_agent.raid.base import Raid, RaidController
-from netbox_agent.misc import get_vendor, get_mount_points
-from netbox_agent.config import config
-import subprocess
 import logging
 import re
+import subprocess
+
+from netbox_agent.config import config
+from netbox_agent.misc import get_mount_points, get_vendor
+from netbox_agent.raid.base import Raid, RaidController
 
 
 class OmreportControllerError(Exception):
@@ -59,7 +60,7 @@ class OmreportController(RaidController):
 
     def _get_physical_disks(self):
         pds = {}
-        res = omreport("storage pdisk controller={}".format(self.controller_index))
+        res = omreport(f"storage pdisk controller={self.controller_index}")
         for pdisk in [d for d in list(res.values())[0]]:
             disk_id = pdisk["ID"]
             size = re.sub("B .*$", "B", pdisk["Capacity"])
@@ -75,7 +76,7 @@ class OmreportController(RaidController):
 
     def _get_virtual_drives_map(self):
         pds = {}
-        res = omreport("storage vdisk controller={}".format(self.controller_index))
+        res = omreport(f"storage vdisk controller={self.controller_index}")
         for vdisk in [d for d in list(res.values())[0]]:
             vdisk_id = vdisk["ID"]
             device = vdisk["Device Name"]
@@ -91,7 +92,7 @@ class OmreportController(RaidController):
                 "mount_point": ", ".join(sorted(mp)),
             }
             drives_res = omreport(
-                "storage pdisk controller={} vdisk={}".format(self.controller_index, vdisk_id)
+                f"storage pdisk controller={self.controller_index} vdisk={vdisk_id}"
             )
             for pdisk in [d for d in list(drives_res.values())[0]]:
                 pds[pdisk["ID"]] = vd

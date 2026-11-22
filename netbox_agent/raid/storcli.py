@@ -1,11 +1,12 @@
-from netbox_agent.raid.base import Raid, RaidController
-from netbox_agent.misc import get_vendor, get_mount_points
-from netbox_agent.config import config
-import subprocess
-import logging
 import json
-import re
+import logging
 import os
+import re
+import subprocess
+
+from netbox_agent.config import config
+from netbox_agent.misc import get_mount_points, get_vendor
+from netbox_agent.raid.base import Raid, RaidController
 
 
 class StorcliControllerError(Exception):
@@ -58,7 +59,7 @@ class StorcliController(RaidController):
 
     def _get_physical_disks(self):
         pds = {}
-        cmd = "/c{}/eall/sall show all".format(self.controller_index)
+        cmd = f"/c{self.controller_index}/eall/sall show all"
         controllers = storecli(cmd)
         pd_info = controllers[self.controller_index]
         pd_re = re.compile(r"^Drive (/c\d+/e\d+/s\d+)$")
@@ -72,8 +73,8 @@ class StorcliController(RaidController):
             pd_identifier = pd_attr["EID:Slt"]
             size = pd_attr.get("Size", "").strip()
             media_type = pd_attr.get("Med", "").strip()
-            pd_details = pd_info["{} - Detailed Information".format(section)]
-            pd_dev_attr = pd_details["{} Device attributes".format(section)]
+            pd_details = pd_info[f"{section} - Detailed Information"]
+            pd_dev_attr = pd_details[f"{section} Device attributes"]
             model = pd_dev_attr.get("Model Number", "").strip()
             pd = {
                 "Model": model,
@@ -90,24 +91,24 @@ class StorcliController(RaidController):
 
     def _get_virtual_drives_map(self):
         vds = {}
-        cmd = "/c{}/vall show all".format(self.controller_index)
+        cmd = f"/c{self.controller_index}/vall show all"
         controllers = storecli(cmd)
         vd_info = controllers[self.controller_index]
         mount_points = get_mount_points()
 
         for vd_identifier, vd_attrs in vd_info.items():
-            if not vd_identifier.startswith("/c{}/v".format(self.controller_index)):
+            if not vd_identifier.startswith(f"/c{self.controller_index}/v"):
                 continue
             volume = vd_identifier.split("/")[-1].lstrip("v")
             vd_attr = vd_attrs[0]
-            vd_pd_identifier = "PDs for VD {}".format(volume)
+            vd_pd_identifier = f"PDs for VD {volume}"
             vd_pds = vd_info[vd_pd_identifier]
-            vd_prop_identifier = "VD{} Properties".format(volume)
+            vd_prop_identifier = f"VD{volume} Properties"
             vd_properties = vd_info[vd_prop_identifier]
             for pd in vd_pds:
                 pd_identifier = pd["EID:Slt"]
                 wwn = vd_properties["SCSI NAA Id"]
-                wwn_path = "/dev/disk/by-id/wwn-0x{}".format(wwn)
+                wwn_path = f"/dev/disk/by-id/wwn-0x{wwn}"
                 device = os.path.realpath(wwn_path)
                 mp = mount_points.get(device, "n/a")
                 vds[pd_identifier] = {

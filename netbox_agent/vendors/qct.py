@@ -3,7 +3,7 @@ from netbox_agent.server import ServerBase
 
 class QCTHost(ServerBase):
     def __init__(self, *args, **kwargs):
-        super(QCTHost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.manufacturer = "QCT"
 
     def is_blade(self):
@@ -17,7 +17,7 @@ class QCTHost(ServerBase):
     def get_chassis_name(self):
         if not self.is_blade():
             return None
-        return "Chassis {}".format(self.get_service_tag())
+        return f"Chassis {self.get_service_tag()}"
 
     def get_chassis(self):
         if self.is_blade():

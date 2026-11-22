@@ -1,11 +1,13 @@
-from contextlib import suppress
-from netbox_agent.config import netbox_instance as nb
-from slugify import slugify
-from shutil import which
-import distro
-import subprocess
-import socket
 import re
+import socket
+import subprocess
+from contextlib import suppress
+from shutil import which
+
+import distro
+from slugify import slugify
+
+from netbox_agent.config import netbox_instance as nb
 
 
 def is_tool(name):
@@ -16,14 +18,14 @@ def is_tool(name):
 def get_device_role(role):
     device_role = nb.dcim.device_roles.get(name=role)
     if device_role is None:
-        raise Exception('DeviceRole "{}" does not exist, please create it'.format(role))
+        raise Exception(f'DeviceRole "{role}" does not exist, please create it')
     return device_role
 
 
 def get_device_type(type):
     device_type = nb.dcim.device_types.get(model=type)
     if device_type is None:
-        raise Exception('DeviceType "{}" does not exist, please create it'.format(type))
+        raise Exception(f'DeviceType "{type}" does not exist, please create it')
     return device_type
 
 
@@ -78,7 +80,7 @@ def get_vendor(name):
 
 def get_hostname(config):
     if config.hostname_cmd is None:
-        return "{}".format(socket.gethostname())
+        return f"{socket.gethostname()}"
     return subprocess.getoutput(config.hostname_cmd)
 
 

@@ -42,7 +42,7 @@ class Ethtool:
         parse ethtool output
         """
 
-        output = subprocess.getoutput("ethtool {}".format(self.interface))
+        output = subprocess.getoutput(f"ethtool {self.interface}")
 
         fields = {
             "speed": "-",
@@ -71,7 +71,7 @@ class Ethtool:
             int(match.group(0)) for match in numbers.finditer(fields.get("sup_link_modes", ""))
         ]
         if supported_speeds:
-            fields["max_speed"] = "{}Mb/s".format(max(supported_speeds))
+            fields["max_speed"] = f"{max(supported_speeds)}Mb/s"
 
         for k in ("speed", "duplex"):
             if fields[k].startswith("Unknown!"):
@@ -80,7 +80,7 @@ class Ethtool:
         return fields
 
     def _parse_ethtool_module_output(self):
-        status, output = subprocess.getstatusoutput("ethtool -m {}".format(self.interface))
+        status, output = subprocess.getstatusoutput(f"ethtool -m {self.interface}")
         if status == 0:
             r = re.search(r"Identifier.*\((\w+)\)", output)
             if r and len(r.groups()) > 0:
@@ -88,7 +88,7 @@ class Ethtool:
         return {}
 
     def parse_ethtool_mac_output(self):
-        status, output = subprocess.getstatusoutput("ethtool -P {}".format(self.interface))
+        status, output = subprocess.getstatusoutput(f"ethtool -P {self.interface}")
         if status == 0:
             match = re.search(r"[0-9a-f:]{17}", output)
             if match and match.group(0) != "00:00:00:00:00:00":

@@ -1,11 +1,11 @@
-import netbox_agent.dmidecode as dmidecode
-from netbox_agent.server import ServerBase
+from netbox_agent import dmidecode
 from netbox_agent.inventory import Inventory
+from netbox_agent.server import ServerBase
 
 
 class HPHost(ServerBase):
     def __init__(self, *args, **kwargs):
-        super(HPHost, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.manufacturer = "HP"
         self.product = self.get_product_name()
         if self.is_blade():

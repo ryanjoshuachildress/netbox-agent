@@ -39,7 +39,7 @@ class IPMI:
     def __init__(self):
         self.ret, self.output = subprocess.getstatusoutput("ipmitool lan print")
         if self.ret != 0:
-            logging.warning("IPMI command failed: {}".format(self.output))
+            logging.warning(f"IPMI command failed: {self.output}")
 
     def parse(self):
         _ipmi = {}
@@ -67,7 +67,7 @@ class IPMI:
         except KeyError as e:
             logging.error("IPMI decoding failed, missing: %s", e.args[0])
             return {}
-        address = str(IPNetwork("{}/{}".format(ip, netmask)))
+        address = str(IPNetwork(f"{ip}/{netmask}"))
 
         ret["ip"] = [address]
         ret["ipmi"] = True
