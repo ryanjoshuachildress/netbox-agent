@@ -582,6 +582,11 @@ class Inventory:
         if config.inventory is None or config.update_inventory is None:
             return False
         if self.update_expansion is False:
-            # Disabled for NetBox 4.7.5 (dcim.inventory_items removed)
-            self.do_netbox_disks()
+            self.do_netbox_cpus()
+            self.do_netbox_memories()
+            self.do_netbox_interfaces()
+            self.do_netbox_motherboard()
+        self.do_netbox_gpus()
+        self.do_netbox_disks()
+        self.do_netbox_raid_cards()
         return True
