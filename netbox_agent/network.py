@@ -590,7 +590,12 @@ class Network:
                     interface.lag = None
 
             # cable the interface
-            if config.network.lldp and isinstance(self, ServerNetwork):
+            virtual_type = self.dcim_choices["interface:type"]["Virtual"]
+            if (
+                config.network.lldp
+                and isinstance(self, ServerNetwork)
+                and self.get_netbox_type_for_nic(nic) != virtual_type
+            ):
                 switch_ip = self.lldp.get_switch_ip(interface.name)
                 switch_interface = self.lldp.get_switch_port(interface.name)
                 if switch_ip and switch_interface:
